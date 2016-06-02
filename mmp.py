@@ -27,90 +27,70 @@ __license__ = """
 """
 
 import argparse
+import time
+import json
 import logging
+
 from doubledecker.clientSafe import ClientSafe
 import docker
 import docker.errors
-import sys, time, json
-import logging
 from jsonrpcserver import dispatch, Methods
 import jsonrpcserver.exceptions
-
-from jsonrpcclient.request import Request, Notification
-Request.notification_errors = True
+from jsonrpcclient.request import Request
 from measure import MEASUREParser
 from papbackend import PAPMeasureBackend
-restart = False
-
-# How to test with UN
-#
-#Pontus Sköldström: switch to the monitor-plugin branch, compile, run ./un-orchestrator with some parameters?
-#Ivano Cerrato: yes, you must enable the compilation flags: ENABLE_DOUBLE_DECKER_CONNECTION
-#Ivano Cerrato: and ENABLE_UNIFY_MONITORING_CONTROLLER
-#Ivano Cerrato: then you have to specify the measure string in the NF-FG you give to the un-orchestrator
-
-
-
-MeasureString = """ measurements {
-  m1 = overload.risk.rx(interface = eth0);
-  m2 = overload.risk.tx(interface = eth0);
-  m3 = overload.risk.rx(interface = eth2);
-  m4 = overload.risk.rx(interface = eth5);
-  m5 = overload.risk.tx(interface = eth5);
-  m6 = rate.tx(interface = eth5);
-}
-zones {
- z1 = (AVG(val = m1, max_age = \"5 minute\") < 0.5);
- z2 = (AVG(val = m1, max_age = \"5 minute\") > 0.5);
- z3 = ((AVG(val = m2, max_age = \"5 minute\") + AVG(val = m3, max_age = \"1 minute\"))   > 0.5);
-
-}
-actions {
- z1->z2 = Publish(topic = \"alarms\", message = \"z1 to z2\"); Notify(target = \"alarms\", message = \"z1 to z2\");
- z2->z1 = Publish(topic = \"alarms\", message = \"z2 to z\");
- ->z1 = Publish(topic = \"alarms\", message = \"entered z1\");
- z1-> = Publish(topic = \"alarms\", message = \"left z1\");
- z1 = Publish(topic = \"alarms\", message = \"in z1\");
- z2 = Publish(topic = \"alarms\", message = \"in z2\");
-}"""
-
-
 from pprint import pprint
-
+from  concurrent.futures import ThreadPoolExecutor
+restart = False
+Request.notification_errors = True
 
 
 class SecureCli(ClientSafe):
     def __init__(self, name, dealerurl, customer, keyfile):
-        super().__init__(name, dealerurl, customer, keyfile)
-        #pyjsonrpc.JsonRpc.__init__()
+        super().__init__(name, dealerurl, keyfile)
+        # pyjsonrpc.JsonRpc.__init__()
         self.docker = docker.Client(base_url='unix://var/run/docker.sock')
         self.MEASURE = None
+
         self.cmds = dict()
-        self.cmds['pipelinedb'] = {'image':'gitlab.testbed.se:5000/pipelinedb', 'name':'pipelinedb' }
-        self.cmds['aggregator'] = {'image':'aggregator', 'name':'aggregator'}
-        self.cmds['opentsdb'] = {'image':'gitlab.testbed.se:5000/opentsdb', 'name':'opentsdb' }
+        with open('mfib.json') as json_file:
+            mfib = json.load(json_file)
+            self.cmds = mfib['docker']
 
         # Log the JSON-RPC messages, can be skipped
-        logging.getLogger('jsonrpcserver').setLevel(logging.ERROR)
+        logging.getLogger('jsonrpcserver').setLevel(logging.INFO)
 
         self.logger = logging.getLogger("MMP")
 
         # Initialize the RPC-Server dispatcher
         self.methods = Methods()
-        self.methods.add_method(self.updateNFFG)
+        self.methods.add_method(self.startNFFG)
+        self.methods.add_method(self.stopNFFG)
         self.methods.add_method(self.docker_information_request)
         self.methods.add_method(self.ping)
-        self.methods.add_method(self.testNFFG)
+        self.methods.add_method(self.hello)
 
-
+        self.running_mfs = {}
+        self.executor = ThreadPoolExecutor(max_workers=1)
         # TODO: Add aggregator to this
-        # Start the default containers (Pipeline, OpenTSDB, and Aggregator)
-        self.initialize_containers()
-
+        # Start the default containers (Pipeline, OpenTSDB, OpenTSDB-DD, and Aggregator)
+        # self.initialize_containers()
 
     # RPC server
+    def hello(self,ddsrc, **kwargs):
+        print("got HELLO from ", ddsrc)
+        for n in self.running_mfs:
+            if self.running_mfs[n]['name'] == ddsrc:
+                print("tool is running, configured?")
+                pprint(self.running_mfs[n])
+                if self.running_mfs[n]['state'] == 'docker_start':
+                    message = str(Request(**self.running_mfs[n]['config']['dd_start']))
+                    print("sending message: ", message)
+                    self.sendmsg(ddsrc,msg=message)
+                    self.running_mfs[n]['state'] = 'dd_start'
+
     def docker_information_request(self, ddsrc, name):
-        self.logger.info("Retrieving information about container %s"%name)
+        self.logger.info("Retrieving information about container %s" % name)
         try:
             data = self.docker.inspect_container(name)
         except docker.errors.NotFound as e:
@@ -118,76 +98,221 @@ class SecureCli(ClientSafe):
 
         return data
 
-    def add(self, a, b):
-        """Test method"""
-        print("JSON-RPC method self.add called")
-        return a + b
 
-    def sub(self,a,b):
-        """Test method"""
-        print("JSON-RPC method self.sub called")
-        return a - b
+    def stopNFFG(self, ddsrc, nffg):
+        print("StopNFFG called!")
+        print("TODO: ")
+        print(" - stop any running monitors")
+        self.vnfmapping = {}
+        i = 0
+        for n in self.running_mfs:
+            self.docker.stop(n)
+            self.docker.remove_container(n)
+            i += 1
+        return "Stopped & removed %d monitors"%(i)
 
-    def testNFFG(self,ddsrc):
-        self.logger.info("Got testNFFG call from %s"%ddsrc)
+    def startNFFG(self, ddsrc, nffg):
+
+        # TODO:
+        # - parse the MEASURE string
+        # - translate ports from MEASURE string to real ports
+        # - generate PAP-MEASURE backend code
+        # - start and configure monitoring tools
+
+
+        vnfs = {}
+        ports = {}
+        print("startNFFG called from %s" % (ddsrc))
+        self.MEASURE = nffg['measure']
+        self.vnfmapping = {}
+        for vnf in nffg['VNFs']:
+            self.vnfmapping[int(vnf['id'])] = vnf
+
+      #  for vnf_id in self.vnfmapping.keys():
+       #     print("VNF with id: %s has name %s" % (vnf_id, self.vnfid_to_name(int(vnf_id))))
+
+       # print("VNF with name %s has id %s" % ('2_ovs5', self.vnfname_to_id('2_ovs5')))
+
+      #  for vnf_id in self.vnfmapping.keys():
+      #      for port_id in range(1, 10):
+      #          port_name = self.port_to_name(int(vnf_id), int(port_id))
+      #          if port_name:
+      #              print("VNF %s, port %d has name %s" % (vnf_id, port_id, port_name))
+
         parser = MEASUREParser()
-        measure = parser.parseToDict(MeasureString)
+        print("Parsing MEASURE ..")
+        measure = parser.parseToDict(self.MEASURE)
         pap = PAPMeasureBackend()
+        print("Generate PAP config..")
         result = pap.generate_config(measure)
+        tools = self.resolve_tools(result['tools'])
+        self.start_tools(tools)
+        print("######################")
+        print("results")
         pprint(result)
-        self.publish(topic="aggregator", message=str(Request("configure",**result)))
         return "OK"
 
-    def updateNFFG(self, ddsrc, nffg):
-        print("updateNFFG called, with NFFG : ", nffg)
-        self.MEASURE = nffg['MEASURE']
-        self.vnfmapping = nffg['VNFs']
-
-        print("VNF ID 1: ", self.vnf_to_name(1))
-        print("VNF ID 2: ", self.vnf_to_name(2))
-        print("VNF ID 3: ", self.vnf_to_name(3))
-        print("VNF(Dock.. ): ", self.name_to_vnfid("docker-983249873294"))
-
-        print("Port(1,1): ", self.port_to_name(1,1))
-        print("Port(1,2): ", self.port_to_name(1,2))
-        print("Port(1,3): ", self.port_to_name(1,3))
-        print("Port(2,1): ", self.port_to_name(2,1))
-        print("Port(2,2): ", self.port_to_name(2,2))
-        print("Port(2,3): ", self.port_to_name(2,3))
-
-        print("Port(veth0): ", self.name_to_port('veth0'))
-        return self.vnf_to_name(1)
+    def fill_params(self,data,config, indent=0):
+        if isinstance(config,dict):
+            for n in config:
+                config[n] = self.fill_params(data,config[n],indent+1)
+        if isinstance(config,list):
+            for i in range(0,len(config)):
+                config[i] = self.fill_params(data,config[i],indent+1)
+        if isinstance(config,str):
+            match = self._p.findall(config)
+            for m in match:
+                if m in data:
+                    config = config.replace("$(%s)"%m,data[m])
 
 
-    # Mapping from NF-FG IDs to real names
-    def name_to_vnfid(self, name):
-        for n in self.vnfmapping:
-            if n['name'] == name:
-                return n['id']
+            #if config[n].startswith("$"):
+                #    print("\t it's a variable: ", config[n][1:])
+                #    if config[n][1:] in data:
+                #        config[n] = data[config[n][1:]]
+
+        return config
+
+    # how to know what is provided at startup and what through DD configuration
+    def start_tools(self, tools):
+        import re
+        self._p = re.compile('\$\(([^\)\(]+)\)')
+        for tool in tools:
+            # get the startup / create / dd_start / dd_stop info about the particular tool
+            mfib_data = self.cmds[tool['label']]
+
+            #print("########## starting tool ########## ")
+            #print("incoming data: ")
+            #pprint(tool)
+            #print("mfib data: ")
+            #pprint(mfib_data)
+
+            if "vnf" in tool['params']:
+                # resolve container_id
+                try:
+                    container_id = self.docker.inspect_container(tool['params']['vnf'])['Id']
+                    tool['params']['container_id'] = container_id
+                except docker.errors.APIError as e:
+                    print("Could not resolv container id for %s"%tool['params']['vnf'])
+                    return "ERROR"
+            tool['params']['name'] = tool['name']
+            tool['params']['label'] = tool['label']
+
+            #print("Known variables")
+            #pprint(tool['params'])
+            if 'docker_create' in mfib_data:
+                mfib_data['docker_create'] = self.fill_params(tool['params'],mfib_data['docker_create'])
+            if 'docker_start' in mfib_data:
+                mfib_data['docker_start'] = self.fill_params(tool['params'],mfib_data['docker_start'])
+            if 'dd_start' in mfib_data:
+                mfib_data['dd_start'] = self.fill_params(tool['params'],mfib_data['dd_start'])
+            if 'dd_start' in mfib_data:
+                mfib_data['dd_stop'] = self.fill_params(tool['params'],mfib_data['dd_stop'])
+
+            #print("config after variable assignment")
+            #print("##########################################")
+
+            binds = {}
+            ports = {}
+            if 'volumes' in mfib_data['docker_create']:
+                vol = mfib_data['docker_create']['volumes']
+                del mfib_data['docker_create']['volumes']
+                mfib_data['docker_create']['volumes'] = []
+
+                for n in vol:
+                    print("splitting ",n)
+                    src,dst,mode = n.split(':')
+                    mfib_data['docker_create']['volumes'].append(dst)
+            #        print("Volume src: ",src, " dst: ", dst, " mode:", mode)
+                    binds[src] = {'bind':dst, 'mode':mode}
+            if 'ports' in mfib_data['docker_create']:
+                vol = mfib_data['docker_create']['ports']
+                del mfib_data['docker_create']['ports']
+                mfib_data['docker_create']['ports'] = []
+
+                for n in vol:
+                    src,dst = n.split(':')
+                    mfib_data['docker_create']['ports'].append(dst)
+            #        print("port src: ",src, " dst: ", dst)
+                    ports[dst] = src
+
+
+            mfib_data['docker_create']['host_config'] = self.docker.create_host_config(
+                binds=binds, port_bindings=ports)
+            pprint(mfib_data)
+            try:
+                print("creating container:")
+                cont = self.docker.create_container(**mfib_data['docker_create'] )
+                print("\tContainer: ", cont)
+                print("starting container")
+                response = self.docker.start(container=cont.get('Id'))
+                print("\tResult: ", response)
+                self.running_mfs[mfib_data['docker_create']['name']] =  {
+                    "state": "docker_start",
+                    "config" : mfib_data,
+                    "name" : tool['name']
+                }
+            except docker.errors.APIError as e:
+                print("Error ", e, " while trying to create %s"%tool['label'])
+
+    def resolve_tools(self, unres_tools):
+        tools = list()
+        for tool in unres_tools:
+            label = tool['label']
+            name = tool['name']
+            params = tool['params']
+            if 'interface' in params and 'vnf' in params:
+                real_interface = self.port_to_name(params['vnf'], params['interface'])
+                real_vnf = self.vnfid_to_name(params['vnf'])
+                if real_interface and real_vnf:
+                    tool['params']['interface'] = real_interface
+                    tool['params']['vnf'] = real_vnf
+                else:
+                    print("Could not resolve vnf: ", params['vnf'], "interface: ", params['interface'])
+                    pprint(self.vnfmapping)
+                    return "ERROR"
+            elif 'vnf' in params:
+                real_vnf = self.vnfid_to_name(params['vnf'])
+                if real_vnf:
+                    tool['params']['vnf'] = real_vnf
+                else:
+                    print("Could not resolve ", params['vnf'])
+                    return
+            tools.append(tool)
+        return tools
+
+    # TODO
+    # Nice method to dynamically translate tool arguments to better arguments
+    def nffgname_to_real(self, map):
+        if 'interface' in map and 'vnf' in map:
+            pass
+
+    def port_to_name(self, vnf_id, portid):
+        if vnf_id in self.vnfmapping:
+            for p in self.vnfmapping[vnf_id]['ports']:
+                if p['id'] == portid:
+                    return p['name']
         return None
 
-    def name_to_port(self,port):
+    # Mapping from NF-FG IDs to real names
+    def vnfid_to_name(self, vnf_id):
+        if vnf_id in self.vnfmapping:
+            return self.vnfmapping[vnf_id]['name']
+        return None
+
+    def vnfname_to_id(self, name):
+        for n in self.vnfmapping:
+            if self.vnfmapping[n]['name'] == name:
+                return self.vnfmapping[n]['id']
+        return None
+
+    def name_to_port(self, port):
         for n in self.vnfmapping:
             vnfid = n['id']
             for p in n['ports']:
                 if p['name'] == port:
-                    return (vnfid,p['id'])
+                    return (vnfid, p['id'])
         return None
-
-    def vnf_to_name(self, vnfid):
-        for n in self.vnfmapping:
-            if n['id'] == vnfid:
-                return n['name']
-        return None
-
-    def port_to_name(self,vnfid, portid):
-        for n in self.vnfmapping:
-            if n['id'] == vnfid:
-                for p in n['ports']:
-                    if p['id'] == portid:
-                        return p['name']
-        return None
-
 
     def ping(self, ddsrc):
         return "OK"
@@ -200,89 +325,86 @@ class SecureCli(ClientSafe):
             if any(ext in c['Names'][0] for ext in self.cmds.keys()):
                 idlist.append(c['Names'][0])
 
-
         images = list()
         for img in self.docker.images():
-           images.append(img['RepoTags'][0])
+            images.append(img['RepoTags'][0])
 
 
         # Pull opentsdb if not available
-        #if self.cmds['opentsdb']['image'] not in images:
+        # if self.cmds['opentsdb']['image'] not in images:
         #    for line in self.docker.pull(repository=self.cmds['opentsdb']['image'], stream=True):
         #        print("\r",json.dumps(json.loads(line.decode()), indent=4))
         # Pull piplinedb if not available
-        #if self.cmds['pipelinedb']['image'] not in images:
+        # if self.cmds['pipelinedb']['image'] not in images:
         #    for line in self.docker.pull(repository=self.cmds['pipelinedb']['image'], stream=True):
         #        print("\r",json.dumps(json.loads(line.decode()), indent=4))
 
 
-        #stop pipeline
+        # stop pipeline
         if restart:
             try:
                 self.docker.stop(self.cmds['pipelinedb']['name'])
             except docker.errors.APIError as e:
-                print("Error ", e , " while trying to stop PipelineDB")
+                print("Error ", e, " while trying to stop PipelineDB")
 
-        #stop OpenTSDB
+                # stop OpenTSDB
             try:
                 self.docker.stop(self.cmds['opentsdb']['name'])
             except docker.errors.APIError as e:
-                print("Error ", e , " while trying to stop OpenTSDB",)
+                print("Error ", e, " while trying to stop OpenTSDB", )
 
-             #remove pipeline
+                # remove pipeline
             try:
                 self.docker.remove_container(self.cmds['pipelinedb']['name'])
             except docker.errors.APIError as e:
-                print("Error ", e , " while trying to remove PipelineDB")
+                print("Error ", e, " while trying to remove PipelineDB")
 
-            #remove OpenTSDB
+            # remove OpenTSDB
             try:
                 self.docker.remove_container(self.cmds['opentsdb']['name'])
             except docker.errors.APIError as e:
-                print("Error ", e , " while trying to remove OpenTSDB")
-
-
+                print("Error ", e, " while trying to remove OpenTSDB")
 
         pipeline_ip = None
-        #start pipeline
+        # start pipeline
         if 'pipelinedb' not in idlist:
             try:
                 print("Creating PipelineDB")
                 cont = self.docker.create_container(**self.cmds['pipelinedb'])
                 response = self.docker.start(container=cont.get('Id'))
-                print("Result: ",response )
+                print("Result: ", response)
 
             except docker.errors.APIError as e:
-                print("Error ", e , " while trying to create PipelineDB")
+                print("Error ", e, " while trying to create PipelineDB")
         try:
             pipeline_ip = self.docker.inspect_container('pipelinedb')['NetworkSettings']['IPAddress']
         except docker.errors.APIError as e:
-            print("Error ", e , " while trying to create PipelineDB")
+            print("Error ", e, " while trying to create PipelineDB")
 
         opentsdb_ip = None
-        #start OpenTSDB
-        #try:
+        # start OpenTSDB
+        # try:
         #    print("Creating OpenTSDB")
         #    cont = self.docker.create_container(**self.cmds['opentsdb'])
         #    response = self.docker.start(container=cont.get('Id'))
         #    print("Result: ",response )
         #    opentsdb_ip = self.docker.inspect_container(cont['Id'])['NetworkSettings']['IPAddress']
 
-#        except docker.errors.APIError as e:
-#            print("Error ", e , " while trying to create OpenTSDB")
+        #        except docker.errors.APIError as e:
+        #            print("Error ", e , " while trying to create OpenTSDB")
 
         # temp!
         opentsdb_up = True
 
         wait_time = 100
         while wait_time > 0:
-            pipeline_up = self.check_server(pipeline_ip,5432)
-       #     opentsdb_up = self.check_server(opentsdb_ip,4242)
+            pipeline_up = self.check_server(pipeline_ip, 5432)
+            #     opentsdb_up = self.check_server(opentsdb_ip,4242)
             if pipeline_up and opentsdb_up:
                 print("PipelineDB and OpenTSDB running!")
                 return
             else:
-                status_str = "Waiting %d for"%wait_time
+                status_str = "Waiting %d for" % wait_time
                 if not pipeline_up:
                     status_str += " PipelineDB "
                 if not opentsdb_up:
@@ -291,8 +413,7 @@ class SecureCli(ClientSafe):
                 time.sleep(1)
             wait_time -= 1
 
-
-    def check_server(self,address, port):
+    def check_server(self, address, port):
         import socket
         # Create a TCP socket
         s = socket.socket()
@@ -305,17 +426,18 @@ class SecureCli(ClientSafe):
         except socket.error as e:
             print("Connection to %s on port %s failed: %s" % (address, port, e))
             return False
-    def handle_jsonrpc(self, src, msg,topic=None):
+
+    def handle_jsonrpc(self, src, msg, topic=None):
+        print("handling JSON-RPC")
         request = json.loads(msg.decode('UTF-8'))
 
-
         if 'error' in request:
-            logging.error("Got error response from: %s"%src)
+            logging.error("Got error response from: %s" % src)
             logging.error(str(request['error']))
             return
 
         if 'result' in request:
-            logging.info("Got response from %s"%src)
+            logging.info("Got response from %s" % src)
             logging.info(str(request['result']))
             return
 
@@ -324,46 +446,58 @@ class SecureCli(ClientSafe):
         if 'params' not in request:
             request['params'] = {}
 
-        request['params']['ddsrc']  = src.decode()
+        if isinstance(request['params'], str):
+            if len(request['params']) < 1:
+                request['params'] = {}
+
+        # print("request: ", request)
+        # print("Src: ", src.decode())
+        request['params']['ddsrc'] = src.decode()
+        response = 1
         response = dispatch(self.methods, request)
 
         # if the http_status is 200, its request/response, otherwise notification
         if response.http_status == 200:
-            logging.info("Replying to %s with %s"%(str(src), str(response)))
-            self.sendmsg(src,str(response))
+            logging.info("Replying to %s with %s" % (str(src), str(response)))
+            self.sendmsg(src, str(response))
         # notification, correctly formatted
         elif response.http_status == 204:
             pass
         # if 400, some kind of error
         # return a message to the sender, even if it was a notification
         elif response.http_status == 400:
-            self.sendmsg(src,str(response))
-            logging.error("Recived bad JSON-RPC from %s, error %s"%(str(src), str(response)))
+            self.sendmsg(src, str(response))
+            logging.error("Recived bad JSON-RPC from %s, error %s" % (str(src), str(response)))
         else:
-            logging.error("Recived bad JSON-RPC from %s \nRequest: %s\nResponose: %s"%(str(src), msg.decode(),str(response)))
+            logging.error(
+                "Recived bad JSON-RPC from %s \nRequest: %s\nResponose: %s" % (str(src), msg.decode(), str(response)))
+
+
 
     # callback called automatically everytime a point to point is sent at
     # destination to the current client
     def on_data(self, src, msg):
-        self.handle_jsonrpc(src=src, msg=msg)
+        print("Queueing future")
+        future = self.executor.submit(self.handle_jsonrpc, src, msg, None)
 
-    # callback called when the client receives a message on a topic he
+    # callback called when the client receives a message on a topic h
     # subscribed to previously
     def on_pub(self, src, topic, msg):
-        self.handle_jsonrpc(src=src,topic=topic, msg=msg)
+        print("Queueing future")
+        future = self.executor.submit(self.handle_jsonrpc,src,msg,topic)
+#        self.handle_jsonrpc(src=src, topic=topic, msg=msg)
 
     # callback called upon registration of the client with its broker
     def on_reg(self):
         self.logger.info("The client is now connected")
         topic = 'unify:mmp'
-        scope = 'node'
+        scope = 'all'
         # this function notifies the broker that the client is interested
         # in the topic 'monitoring' and the scope should be 'all'
-        self.logger.info("Subscribing to topic '%s', scope '%s'"%(topic,scope))
+        self.logger.info("Subscribing to topic '%s', scope '%s'" % (topic, scope))
         self.subscribe(topic, scope)
-       # self.logger.info("Subscribing to topic 'measurement', scope 'node'")
-       # self.subscribe('measurement','node')
-
+        # self.logger.info("Subscribing to topic 'measurement', scope 'node'")
+        # self.subscribe('measurement','node')
 
     # callback called when the client detects that the heartbeating with
     # its broker has failed, it can happen if the broker is terminated/crash
@@ -378,7 +512,6 @@ class SecureCli(ClientSafe):
     # callback called when the client receives an error message
     def on_error(self, code, msg):
         print("ERROR n#%d : %s" % (code, msg))
-
 
 
 if __name__ == '__main__':
@@ -406,7 +539,7 @@ if __name__ == '__main__':
         "--keyfile",
         help='File containing the encryption/authentication keys)',
         nargs='?',
-        default='/etc/doubledecker/a-keys.json')
+        default='/etc/doubledecker/public-keys.json')
 
     args = parser.parse_args()
 
@@ -416,8 +549,7 @@ if __name__ == '__main__':
 
     logging.basicConfig(format='%(levelname)s:%(message)s', filename=args.logfile, level=numeric_level)
 
-
-    logo =    r"""
+    logo = r"""
    _____                .__  __               .__
   /     \   ____   ____ |__|/  |_  ___________|__| ____    ____
  /  \ /  \ /  _ \ /    \|  \   __\/  _ \_  __ \  |/    \  / ___\
@@ -440,7 +572,7 @@ __________.__               .__
     logging.info(logo)
     genclient = SecureCli(name="mmp",
                           dealerurl=args.dealer,
-                          customer="a",
+                          customer="public",
                           keyfile=args.keyfile)
 
     genclient.start()

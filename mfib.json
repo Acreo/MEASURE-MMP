@@ -1,0 +1,136 @@
+{
+  "tools": {
+    "ratemon": {
+      "version": 0,
+      "label": "ratemon",
+      "parameters": {
+        "vnf": "<string>",
+        "interface": "<string>"
+      },
+      "results": {
+        "throughput.rx": "<int>",
+        "throughput.tx": "<int>",
+        "overload.risk.rx": "<float>",
+        "overload.risk.tx": "<float>"
+      }
+    },
+    "cadvisor": {
+      "version": 0,
+      "label": "cadvisor",
+      "parameters": {
+        "vnf": "<string>"
+      },
+      "results": {
+        "cpu": "<float>",
+        "mem": "<float>"
+      }
+    },
+    "ping-aggregate": {
+      "version": 0,
+      "label": "ping-aggregate",
+      "parameters": {
+        "source.ip4": "<IPv4>",
+        "destination.ip4": "<IPv4>",
+        "count": "<num>",
+        "interval": "<ms>"
+      },
+      "results": {
+        "delay.twoway.icmp.us.min": "<float>",
+        "delay.twoway.icmp.us.mean": "<float>",
+        "delay.twoway.icmp.us.50pct": "<float>",
+        "delay.twoway.icmp.us.max": "<float>",
+        "delay.twoway.icmp.count": "<int>"
+      }
+    },
+    "ping-singletons": {
+      "version": 0,
+      "label": "ping-singletons",
+      "parameters": {
+        "source.ip4": "<IPv4>",
+        "destination.ip4": "<IPv4>"
+      },
+      "results": [
+        "delay.twoway.icmp.us",
+        "time"
+      ]
+    }
+  },
+  "docker": {
+    "ratemon": {
+      "singelton": false,
+      "docker_create": {
+        "image": "sics/ratemon:latest",
+        "environment": {},
+        "volumes": {},
+        "name": {},
+        "domainname": {}
+      },
+      "docker_start": {},
+      "dd_start": {
+        "params": {}
+      },
+      "dd_stop": {
+        "params": {}
+      }
+    },
+    "cadvisor": {
+      "singleton": true,
+      "docker_create": {
+        "hostname": "$(name)",
+        "name": "$(label)-$(name)",
+        "environment": [
+          "NAME=$(name)",
+          "KEY=public-keys.json"
+        ],
+        "image": "gitlab.testbed.se:5000/cadvisor:v1",
+        "volumes": [
+          "/etc/doubledecker:/keys:rw",
+          "/:/rootfs:ro",
+          "/var/run:/var/run:rw",
+          "/sys:/sys:ro",
+          "/var/lib/docker/:/var/lib/docker:ro"
+        ],
+        "ports": [
+          "8081:8080"
+        ]
+      },
+      "docker_start": {
+      },
+      "dd_start": {
+        "method": "start_monitoring",
+        "spec_json": {
+          "parameters": {
+            "containerID": "$(container_id)"
+          }
+        }
+      },
+      "dd_stop": {
+        "method": "stop_monitoring",
+        "params": {
+          "container_id": "$(container_id)"
+        }
+      }
+    },
+    "pipelinedb": {
+      "docker_create": {
+        "image": "gitlab.testbed.se:5000/pipelinedb",
+        "name": "pipelinedb",
+        "hostname": "pipelinedb"
+      }
+    },
+    "aggregator": {
+      "docker_create": {
+        "image": "gitlab.testbed.se:5000/aggregator",
+        "name": "aggregator",
+        "hostname": "aggregator"
+      }
+    },
+    "opentsdb": {
+      "docker_create": {
+        "image": "gitlab.testbed.se:5000/opentsdb",
+        "name": "opentsdb",
+        "hostname": "opentsdb"
+      }
+    }
+  }
+}

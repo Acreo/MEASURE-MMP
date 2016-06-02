@@ -27,7 +27,7 @@ class DictDiffer(object):
 
 
 class PAPMeasureBackend():
-    def __init__(self, repositoryfile='repository.json'):
+    def __init__(self, repositoryfile='mfib.json'):
         self.mfib = None
         self.prepare_strings = dict()
         self.jsonrpc_start = dict()
@@ -74,12 +74,12 @@ class PAPMeasureBackend():
             self.zone_to_view(zone)
 
 
-        pprint(["Toools to start", self.tools_to_start])
-        pprint(["Streams - mvars", self.stream_to_mvar])
-        pprint(["Mvars - streams", self.mvar_to_stream])
-        pprint(["Zone dependencies", self.zdeps])
-        pprint(["Actions",self.action_list])
-        pprint(["Zone commands: ", self.zone_commands], width=200)
+#        pprint(["Toools to start", self.tools_to_start])
+#        pprint(["Streams - mvars", self.stream_to_mvar])
+#        pprint(["Mvars - streams", self.mvar_to_stream])
+#        pprint(["Zone dependencies", self.zdeps])
+#        pprint(["Actions",self.action_list])
+#        pprint(["Zone commands: ", self.zone_commands], width=200)
 
         result = dict()
         result['tools'] = self.tools_to_start
@@ -132,11 +132,17 @@ class PAPMeasureBackend():
         self.mvar_to_type[name] = self.mfib['tools'][tool]['results'][metric]
         for req in tparam:
             for p in function['params']:
+                #print("p in function: ", p)
                 if p['pname'] == req:
-        #            logging.debug("required type " + tparam[req] +  "found type "+  str(type(p['pvar'])))
-                    # TODO: check if types match
-                    param[req] = p['pvar']
-                    function['params'].remove(p)
+                    if 'pvar' in p:
+                        param[req] = p['pvar']
+                        function['params'].remove(p)
+                    elif 'pint' in p:
+                        param[req] = p['pint']
+                        function['params'].remove(p)
+                    else:
+                        print("ERROR unknown variable type in function argument")
+
 
         if len(function['params']) > 0:
             raise Exception("Too many parameters, did not expect "  + str(function['params']))
@@ -151,8 +157,8 @@ class PAPMeasureBackend():
     def action_to_dict(self,action):
         fdesc = action['functions']
         state = action['state']
-        print("action functions: ", fdesc)
-        print("action state: ", state)
+        #print("action functions: ", fdesc)
+        #print("action state: ", state)
         retval = dict()
         retval['state'] = state
         funs = dict()
@@ -228,8 +234,8 @@ class PAPMeasureBackend():
             c_str3 = "FROM %s;"%(self.mvar_to_stream[funs['val']])
             create_str = c_str + c_str2 + c_str3
             self.zone_commands[zname] = {'select':select_str,'create':create_str, 'streams':create_streams}
-            print(create_str)
-            print(select_str)
+         #   print(create_str)
+         #   print(select_str)
         else:
             print("multi-level zone, cant handle it!")
 
@@ -238,8 +244,8 @@ class PAPMeasureBackend():
             self.prepare_strings[n['name']] = "CREATE STREAM stream_%s (data json)"%(n['name'])
             self.jsonrpc_start[n['name']] = str(Request("start",**n['params']))
 
-        pprint(self.prepare_strings)
-        pprint(self.jsonrpc_start, width=140)
+      ##  pprint(self.prepare_strings)
+       ## pprint(self.jsonrpc_start, width=140)
 
 
 
