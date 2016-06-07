@@ -101,7 +101,8 @@
         "spec_json": {
           "parameters": {
             "containerID": "$(container_id)"
-          }
+          },
+          "results": {"ram":"float", "cpu":"float"}
         }
       },
       "dd_stop": {
