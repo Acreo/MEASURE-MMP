@@ -189,6 +189,10 @@ class SecureCli(ClientSafe):
         self._p = re.compile('\$\(([^\)\(]+)\)')
         for tool in tools:
             # get the startup / create / dd_start / dd_stop info about the particular tool
+            self.cmds = dict()
+            with open('mfib.json') as json_file:
+                mfib = json.load(json_file)
+                self.cmds = mfib['docker']
             mfib_data = self.cmds[tool['label']]
 
             #print("########## starting tool ########## ")
@@ -225,8 +229,9 @@ class SecureCli(ClientSafe):
             binds = {}
             ports = {}
             if 'volumes' in mfib_data['docker_create']:
-                print("start_tools1, volumes: ", vol)
+
                 vol = mfib_data['docker_create']['volumes']
+
                 del mfib_data['docker_create']['volumes']
                 mfib_data['docker_create']['volumes'] = []
                 print("start_tools2, volumes: ", vol)
