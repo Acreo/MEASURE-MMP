@@ -79,14 +79,14 @@ class SecureCli(ClientSafe):
 
     # RPC server
     def hello(self,ddsrc, **kwargs):
-        print("got HELLO from ", ddsrc)
+        self.logger.info("got HELLO from ", ddsrc)
         for n in self.running_mfs:
             if self.running_mfs[n]['name'] == ddsrc:
-                print("tool is running, configured?")
+                self.logger.info("tool is running, configured?")
                 pprint(self.running_mfs[n])
                 if self.running_mfs[n]['state'] == 'docker_start':
                     message = str(Request(**self.running_mfs[n]['config']['dd_start']))
-                    print("sending message: ", message)
+                    self.logger.info("sending message: %s"%(str(message))
                     self.sendmsg(ddsrc,msg=message)
                     self.running_mfs[n]['state'] = 'dd_start'
 
@@ -96,15 +96,16 @@ class SecureCli(ClientSafe):
             data = self.docker.inspect_container(name)
         except docker.errors.APIError as e:
             response = "%s not found"%name
+            self.logger.error("docker_information_request %s"%response)
             return {"error": response}
                     
         return data
 
 
     def stopNFFG(self, ddsrc, nffg):
-        print("StopNFFG called!")
-        print("TODO: ")
-        print(" - stop any running monitors")
+        self.logger.info("StopNFFG called!")
+        self.logger.warning("TODO: ")
+        self.logger.warning(" - stop any running monitors")
         self.vnfmapping = {}
         i = 0
         for n in self.running_mfs:
@@ -124,7 +125,7 @@ class SecureCli(ClientSafe):
 
         vnfs = {}
         ports = {}
-        print("startNFFG called from %s" % (ddsrc))
+        self.logger.info("startNFFG called from %s" % (ddsrc))
         self.MEASURE = nffg['measure']
         self.vnfmapping = {}
         for vnf in nffg['VNFs']:
@@ -142,20 +143,20 @@ class SecureCli(ClientSafe):
       #              print("VNF %s, port %d has name %s" % (vnf_id, port_id, port_name))
 
         parser = MEASUREParser()
-        print("Parsing MEASURE ..")
+        self.logger.info("Parsing MEASURE ..")
         try: 
             measure = parser.parseToDict(self.MEASURE)
         except pyparsing.ParseException as e: 
-            print("Could not parse MEASURE string!")
+            self.logger.error("Could not parse MEASURE string!")
             return "Could not parse measure!"
                     
         pap = PAPMeasureBackend()
-        print("Generate PAP config..")
+        self.logger.info("Generate PAP config..")
         result = pap.generate_config(measure)
         tools = self.resolve_tools(result['tools'])
         self.start_tools(tools)
-        print("######################")
-        print("results")
+        self.logger.info("######################")
+        self.logger.info("results")
         pprint(result)
         return "OK"
 
@@ -200,7 +201,7 @@ class SecureCli(ClientSafe):
                     container_id = self.docker.inspect_container(tool['params']['vnf'])['Id']
                     tool['params']['container_id'] = container_id
                 except docker.errors.APIError as e:
-                    print("Could not resolv container id for %s"%tool['params']['vnf'])
+                    self.logger.error("Could not resolv container id for %s"%tool['params']['vnf'])
                     return "ERROR"
             tool['params']['name'] = tool['name']
             tool['params']['label'] = tool['label']
@@ -227,7 +228,7 @@ class SecureCli(ClientSafe):
                 mfib_data['docker_create']['volumes'] = []
 
                 for n in vol:
-                    print("splitting ",n)
+                    self.logger.info("splitting ",n)
                     src,dst,mode = n.split(':')
                     mfib_data['docker_create']['volumes'].append(dst)
             #        print("Volume src: ",src, " dst: ", dst, " mode:", mode)
@@ -248,19 +249,19 @@ class SecureCli(ClientSafe):
                 binds=binds, port_bindings=ports)
             pprint(mfib_data)
             try:
-                print("creating container:")
+                self.logger.info("creating container:")
                 cont = self.docker.create_container(**mfib_data['docker_create'] )
                 print("\tContainer: ", cont)
-                print("starting container")
+                self.logger.info("starting container")
                 response = self.docker.start(container=cont.get('Id'))
-                print("\tResult: ", response)
+                self.logger.info("\tResult: ", response)
                 self.running_mfs[mfib_data['docker_create']['name']] =  {
                     "state": "docker_start",
                     "config" : mfib_data,
                     "name" : tool['name']
                 }
             except docker.errors.APIError as e:
-                print("Error ", e, " while trying to create %s"%tool['label'])
+                self.logger.error("Error %s while trying to create %s"%(str(e),tool['label']))
 
     def resolve_tools(self, unres_tools):
         tools = list()
@@ -275,7 +276,7 @@ class SecureCli(ClientSafe):
                     tool['params']['interface'] = real_interface
                     tool['params']['vnf'] = real_vnf
                 else:
-                    print("Could not resolve vnf: ", params['vnf'], "interface: ", params['interface'])
+                    self.logger.error("Could not resolve vnf: %s interface: %s"%(params['vnf'], params['interface']))
                     pprint(self.vnfmapping)
                     return "ERROR"
             elif 'vnf' in params:
@@ -283,7 +284,7 @@ class SecureCli(ClientSafe):
                 if real_vnf:
                     tool['params']['vnf'] = real_vnf
                 else:
-                    print("Could not resolve ", params['vnf'])
+                    self.logger.error("Could not resolve %s "%params['vnf'])
                     return
             tools.append(tool)
         return tools
@@ -352,41 +353,41 @@ class SecureCli(ClientSafe):
             try:
                 self.docker.stop(self.cmds['pipelinedb']['name'])
             except docker.errors.APIError as e:
-                print("Error ", e, " while trying to stop PipelineDB")
+                self.logger.error("Error %s while trying to stop PipelineDB"%str(e))
 
                 # stop OpenTSDB
             try:
                 self.docker.stop(self.cmds['opentsdb']['name'])
             except docker.errors.APIError as e:
-                print("Error ", e, " while trying to stop OpenTSDB", )
+                self.logger.error("Error %s while trying to stop OpenTSDB"%str(e) )
 
                 # remove pipeline
             try:
                 self.docker.remove_container(self.cmds['pipelinedb']['name'])
             except docker.errors.APIError as e:
-                print("Error ", e, " while trying to remove PipelineDB")
+                self.logger.error("Error %s while trying to remove PipelineDB"%(str(e)))
 
             # remove OpenTSDB
             try:
                 self.docker.remove_container(self.cmds['opentsdb']['name'])
             except docker.errors.APIError as e:
-                print("Error ", e, " while trying to remove OpenTSDB")
+                self.logger.error("Error %s while trying to remove OpenTSDB"%(str(e)))
 
         pipeline_ip = None
         # start pipeline
         if 'pipelinedb' not in idlist:
             try:
-                print("Creating PipelineDB")
+                self.logger.info("Creating PipelineDB")
                 cont = self.docker.create_container(**self.cmds['pipelinedb'])
                 response = self.docker.start(container=cont.get('Id'))
-                print("Result: ", response)
+                self.logger.info("Result: %s"%(str(response)))
 
             except docker.errors.APIError as e:
-                print("Error ", e, " while trying to create PipelineDB")
+                self.logger.info("Error %s while trying to create PipelineDB"%(str(e)))
         try:
             pipeline_ip = self.docker.inspect_container('pipelinedb')['NetworkSettings']['IPAddress']
         except docker.errors.APIError as e:
-            print("Error ", e, " while trying to create PipelineDB")
+            self.logger.info("Error %s while trying to create PipelineDB"%str(e))
 
         opentsdb_ip = None
         # start OpenTSDB
@@ -408,7 +409,7 @@ class SecureCli(ClientSafe):
             pipeline_up = self.check_server(pipeline_ip, 5432)
             #     opentsdb_up = self.check_server(opentsdb_ip,4242)
             if pipeline_up and opentsdb_up:
-                print("PipelineDB and OpenTSDB running!")
+                self.logger.info("PipelineDB and OpenTSDB running!")
                 return
             else:
                 status_str = "Waiting %d for" % wait_time
@@ -416,7 +417,7 @@ class SecureCli(ClientSafe):
                     status_str += " PipelineDB "
                 if not opentsdb_up:
                     status_str += " OpenTSDB"
-                print(status_str)
+                self.logger.info(status_str)
                 time.sleep(1)
             wait_time -= 1
 
@@ -424,20 +425,20 @@ class SecureCli(ClientSafe):
         import socket
         # Create a TCP socket
         s = socket.socket()
-        print("Attempting to connect to %s on port %s" % (address, port))
+        self.logger.info("Attempting to connect to %s on port %s" % (address, port))
         try:
             s.connect((address, port))
-            print("Connected to %s on port %s" % (address, port))
+            self.logger.info("Connected to %s on port %s" % (address, port))
             s.close()
             return True
         except socket.error as e:
-            print("Connection to %s on port %s failed: %s" % (address, port, e))
+            self.logger.info("Connection to %s on port %s failed: %s" % (address, port, e))
             return False
 
     def handle_jsonrpc(self, src, msg, topic=None):
-        print("handling JSON-RPC")
+        self.logger.info("handling JSON-RPC")
         request = json.loads(msg.decode('UTF-8'))
-        print("got request ", request)
+        self.logger.info("got request %s "%str(request))
         if 'error' in request:
             logging.error("Got error response from: %s" % src)
             logging.error(str(request['error']))
@@ -463,7 +464,7 @@ class SecureCli(ClientSafe):
         request['params']['ddsrc'] = src.decode()
         response = 1
         response = dispatch(self.methods, request)
-        print("handle_json, got response ", response) 
+        self.logger.info("handle_json, got response %s"%(str(response)))
         # if the http_status is 200, its request/response, otherwise notification
         if response.http_status == 200:
             logging.info("Replying to %s with %s" % (str(src), str(response)))
@@ -474,7 +475,7 @@ class SecureCli(ClientSafe):
         # if 400, some kind of error
         # return a message to the sender, even if it was a notification
         elif response.http_status == 400:
-            print("sending response to ",src," message: ", str(response))
+            self.logger.info("sending response to %s  message: "%(str(str), str(response)))
             self.sendmsg(src, str(response))
             logging.error("Recived bad JSON-RPC from %s, error %s" % (str(src), str(response)))
         else:
@@ -486,13 +487,13 @@ class SecureCli(ClientSafe):
     # callback called automatically everytime a point to point is sent at
     # destination to the current client
     def on_data(self, src, msg):
-        print("Queueing future")
+        self.logger.info("Queueing future")
         future = self.executor.submit(self.handle_jsonrpc, src, msg, None)
 
     # callback called when the client receives a message on a topic h
     # subscribed to previously
     def on_pub(self, src, topic, msg):
-        print("Queueing future")
+        self.logger.info("Queueing future")
         #future = self.executor.submit(self.handle_jsonrpc,src,msg,topic)
         self.handle_jsonrpc(src=src, topic=topic, msg=msg)
 
@@ -520,7 +521,7 @@ class SecureCli(ClientSafe):
 
     # callback called when the client receives an error message
     def on_error(self, code, msg):
-        print("ERROR n#%d : %s" % (code, msg))
+        self.logger.info("ERROR n#%d : %s" % (code, msg))
 
 
 if __name__ == '__main__':
