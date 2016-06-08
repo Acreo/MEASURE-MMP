@@ -225,10 +225,11 @@ class SecureCli(ClientSafe):
             binds = {}
             ports = {}
             if 'volumes' in mfib_data['docker_create']:
+                print("start_tools1, volumes: ", vol)
                 vol = mfib_data['docker_create']['volumes']
                 del mfib_data['docker_create']['volumes']
                 mfib_data['docker_create']['volumes'] = []
-
+                print("start_tools2, volumes: ", vol)
                 for n in vol:
                     self.logger.info("splitting %s"%str(n))
                     src,dst,mode = n.split(':')
@@ -237,9 +238,10 @@ class SecureCli(ClientSafe):
                     binds[src] = {'bind':dst, 'mode':mode}
             if 'ports' in mfib_data['docker_create']:
                 vol = mfib_data['docker_create']['ports']
+                print("start_tools3, ports: ", vol)
                 del mfib_data['docker_create']['ports']
                 mfib_data['docker_create']['ports'] = []
-
+                print("start_tools4, ports: ", vol)
                 for n in vol:
                     src,dst = n.split(':')
                     mfib_data['docker_create']['ports'].append(dst)
