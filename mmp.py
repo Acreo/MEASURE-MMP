@@ -38,6 +38,7 @@ from jsonrpcserver import dispatch, Methods
 import jsonrpcserver.exceptions
 from jsonrpcclient.request import Request
 from measure import MEASUREParser
+import pyparsing
 from papbackend import PAPMeasureBackend
 from pprint import pprint
 from  concurrent.futures import ThreadPoolExecutor
@@ -49,7 +50,7 @@ class SecureCli(ClientSafe):
     def __init__(self, name, dealerurl, customer, keyfile):
         super().__init__(name, dealerurl, keyfile)
         # pyjsonrpc.JsonRpc.__init__()
-        self.docker = docker.Client(base_url='unix://var/run/docker.sock')
+        self.docker = docker.Client(version='auto',base_url='unix://var/run/docker.sock')
         self.MEASURE = None
 
         self.cmds = dict()
@@ -93,9 +94,10 @@ class SecureCli(ClientSafe):
         self.logger.info("Retrieving information about container %s" % name)
         try:
             data = self.docker.inspect_container(name)
-        except docker.errors.NotFound as e:
-            raise jsonrpcserver.exceptions.ServerError(data=e.explanation)
-
+        except docker.errors.APIError as e:
+            response = "%s not found"%name
+            return {"error": response}
+                    
         return data
 
 
@@ -141,7 +143,12 @@ class SecureCli(ClientSafe):
 
         parser = MEASUREParser()
         print("Parsing MEASURE ..")
-        measure = parser.parseToDict(self.MEASURE)
+        try: 
+            measure = parser.parseToDict(self.MEASURE)
+        except pyparsing.ParseException as e: 
+            print("Could not parse MEASURE string!")
+            return "Could not parse measure!"
+                    
         pap = PAPMeasureBackend()
         print("Generate PAP config..")
         result = pap.generate_config(measure)
@@ -430,7 +437,7 @@ class SecureCli(ClientSafe):
     def handle_jsonrpc(self, src, msg, topic=None):
         print("handling JSON-RPC")
         request = json.loads(msg.decode('UTF-8'))
-
+        print("got request ", request)
         if 'error' in request:
             logging.error("Got error response from: %s" % src)
             logging.error(str(request['error']))
@@ -443,6 +450,7 @@ class SecureCli(ClientSafe):
 
         # include the 'ddsrc' parameter so the
         # dispatched method knows where the message came from
+      
         if 'params' not in request:
             request['params'] = {}
 
@@ -455,7 +463,7 @@ class SecureCli(ClientSafe):
         request['params']['ddsrc'] = src.decode()
         response = 1
         response = dispatch(self.methods, request)
-
+        print("handle_json, got response ", response) 
         # if the http_status is 200, its request/response, otherwise notification
         if response.http_status == 200:
             logging.info("Replying to %s with %s" % (str(src), str(response)))
@@ -466,6 +474,7 @@ class SecureCli(ClientSafe):
         # if 400, some kind of error
         # return a message to the sender, even if it was a notification
         elif response.http_status == 400:
+            print("sending response to ",src," message: ", str(response))
             self.sendmsg(src, str(response))
             logging.error("Recived bad JSON-RPC from %s, error %s" % (str(src), str(response)))
         else:
@@ -484,8 +493,8 @@ class SecureCli(ClientSafe):
     # subscribed to previously
     def on_pub(self, src, topic, msg):
         print("Queueing future")
-        future = self.executor.submit(self.handle_jsonrpc,src,msg,topic)
-#        self.handle_jsonrpc(src=src, topic=topic, msg=msg)
+        #future = self.executor.submit(self.handle_jsonrpc,src,msg,topic)
+        self.handle_jsonrpc(src=src, topic=topic, msg=msg)
 
     # callback called upon registration of the client with its broker
     def on_reg(self):
