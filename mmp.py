@@ -86,7 +86,7 @@ class SecureCli(ClientSafe):
                 pprint(self.running_mfs[n])
                 if self.running_mfs[n]['state'] == 'docker_start':
                     message = str(Request(**self.running_mfs[n]['config']['dd_start']))
-                    self.logger.info("sending message: %s"%(str(message))
+                    self.logger.info("sending message: %s"%(str(message)))
                     self.sendmsg(ddsrc,msg=message)
                     self.running_mfs[n]['state'] = 'dd_start'
 
@@ -475,7 +475,7 @@ class SecureCli(ClientSafe):
         # if 400, some kind of error
         # return a message to the sender, even if it was a notification
         elif response.http_status == 400:
-            self.logger.info("sending response to %s  message: "%(str(str), str(response)))
+            self.logger.info("sending response to %s  message: %s"%(str(str), str(response)))
             self.sendmsg(src, str(response))
             logging.error("Recived bad JSON-RPC from %s, error %s" % (str(src), str(response)))
         else:
