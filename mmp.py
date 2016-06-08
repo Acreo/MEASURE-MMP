@@ -154,6 +154,8 @@ class SecureCli(ClientSafe):
         self.logger.info("Generate PAP config..")
         result = pap.generate_config(measure)
         tools = self.resolve_tools(result['tools'])
+        self.logger.info("resolved tools")
+        pprint(tools)
         self.start_tools(tools)
         self.logger.info("######################")
         self.logger.info("results")
