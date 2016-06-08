@@ -79,7 +79,7 @@ class SecureCli(ClientSafe):
 
     # RPC server
     def hello(self,ddsrc, **kwargs):
-        self.logger.info("got HELLO from ", ddsrc)
+        self.logger.info("got HELLO from %s"%str(ddsrc))
         for n in self.running_mfs:
             if self.running_mfs[n]['name'] == ddsrc:
                 self.logger.info("tool is running, configured?")
@@ -228,7 +228,7 @@ class SecureCli(ClientSafe):
                 mfib_data['docker_create']['volumes'] = []
 
                 for n in vol:
-                    self.logger.info("splitting ",n)
+                    self.logger.info("splitting %s"%str(n))
                     src,dst,mode = n.split(':')
                     mfib_data['docker_create']['volumes'].append(dst)
             #        print("Volume src: ",src, " dst: ", dst, " mode:", mode)
@@ -254,7 +254,7 @@ class SecureCli(ClientSafe):
                 print("\tContainer: ", cont)
                 self.logger.info("starting container")
                 response = self.docker.start(container=cont.get('Id'))
-                self.logger.info("\tResult: ", response)
+                self.logger.info("\tResult: %s"%str(response))
                 self.running_mfs[mfib_data['docker_create']['name']] =  {
                     "state": "docker_start",
                     "config" : mfib_data,
