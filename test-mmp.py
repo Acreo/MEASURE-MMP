@@ -56,9 +56,8 @@ class SecureCli(ClientSafe):
         # this function notifies the broker that the client is interested
 
         MeasureString = """ measurements {
-          m1 = cpu(vnf = 00000004);
-          m2 = mem(vnf = 00000004);
-
+          m1 = throughput.rx(interface = veth3un);
+          m2 = throughput.tx(interface = veth4un);
         }
         zones {
           z1 = (AVG(val = m1, max_age = \"5 minute\") < 0.5);
@@ -89,7 +88,7 @@ class SecureCli(ClientSafe):
                                       {'id': 3, 'name': '2_ovs1_3.lxc'},
                                       {'id': 4, 'name': '2_ovs1_4.lxc'},
                                       {'id': 5, 'name': '2_ovs1_5.lxc'}], 'name': '2_ovs1'}],
-            'measure': 'measurements {m1 = cpu(vnf = 2);m2 = mem(vnf = 2);}zones {z1 = (AVG(val = m1, max_age = "5 minute") < 0.5);z2 = (AVG(val = m2, max_age = "5 minute") > 0.5);}actions {z1->z2 = Publish(topic = "alarms", message = "z1 to z2"); Notify(target = "alarms", message = "z1 to z2");z2->z1 = Publish(topic = "alarms", message = "z2 to z");->z1 = Publish(topic = "alarms", message = "entered z1");z1-> = Publish(topic = "alarms", message = "left z1");z1 = Publish(topic = "alarms", message = "in z1");z2 = Publish(topic = "alarms", message = "in z2");}'
+            'measure': 'measurements {m1 = throughput.rx(interface = veth3un);m2 = throughput.tx(interface = veth4un);}zones {z1 = (AVG(val = m1, max_age = "5 minute") < 0.5);z2 = (AVG(val = m2, max_age = "5 minute") > 0.5);}actions {z1->z2 = Publish(topic = "alarms", message = "z1 to z2"); Notify(target = "alarms", message = "z1 to z2");z2->z1 = Publish(topic = "alarms", message = "z2 to z");->z1 = Publish(topic = "alarms", message = "entered z1");z1-> = Publish(topic = "alarms", message = "left z1");z1 = Publish(topic = "alarms", message = "in z1");z2 = Publish(topic = "alarms", message = "in z2");}'
         }
 
 
@@ -150,8 +149,8 @@ class SecureCli(ClientSafe):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description="Generic message client")
-    parser.add_argument('name', help="Identity of this client")
-    parser.add_argument('customer', help="Name of the customer to get the keys (i.e. 'a' for the customer-a.json file)")
+    parser.add_argument('name', help="Identity of this client", default="test-mmp")
+    parser.add_argument('customer', help="Name of the customer to get the keys (i.e. 'a' for the customer-a.json file)", default = "public")
     parser.add_argument(
         '-d',
         "--dealer",
@@ -175,7 +174,7 @@ if __name__ == '__main__':
         "--keyfile",
         help='File containing the encryption/authentication keys)',
         nargs='?',
-        default='')
+        default='/etc/doubledecker/public-keys.json')
 
     args = parser.parse_args()
 
