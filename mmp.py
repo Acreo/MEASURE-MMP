@@ -117,16 +117,6 @@ class SecureCli(ClientSafe):
         return "Stopped & removed %d monitors"%(i)
 
     def startNFFG(self, ddsrc, nffg):
-
-        # TODO:
-        # not handling the SAP parameters if they exist
-        # nffg['sap'] = [{'name': 'virtual-sap4', 'interface': 'veth3un'}, 
-        # {'name': 'virtual-sap1', 'interface': 'veth0un'}, 
-        # {'name': 'virtual-sap3', 'interface': 'veth2un'}, 
-        # {'name': 'virtual-sap2', 'interface': 'veth1un'}]
-
-        vnfs = {}
-        ports = {}
         self.logger.info("startNFFG called from %s" % (ddsrc))
         self.MEASURE = nffg['measure']
         if len(self.MEASURE) < 2:
@@ -137,6 +127,11 @@ class SecureCli(ClientSafe):
         self.vnfmapping = {}
         for vnf in nffg['VNFs']:
             self.vnfmapping[int(vnf['id'])] = vnf
+
+        self.sapmapping = {}
+        if 'sap' in nffg:
+            for n in nffg['sap']:
+                self.sapmapping[n['name']] = n['interface']
 
         parser = MEASUREParser()
         self.logger.info("Parsing MEASURE ..")
@@ -207,10 +202,10 @@ class SecureCli(ClientSafe):
 
             binds = {}
             ports = {}
+            link = []
             if 'volumes' in mfib_data['docker_create']:
-
                 vol = mfib_data['docker_create']['volumes']
-
+                print("start_tools1, volumes: ", vol)
                 del mfib_data['docker_create']['volumes']
                 mfib_data['docker_create']['volumes'] = []
                 print("start_tools2, volumes: ", vol)
@@ -229,16 +224,24 @@ class SecureCli(ClientSafe):
                     src,dst = n.split(':')
                     mfib_data['docker_create']['ports'].append(dst)
                     ports[dst] = src
-
+            if 'links' in mfib_data['docker_create']:
+                links = mfib_data['docker_create']['links']
+                print("start_tools5, links: ", links)
+                del mfib_data['docker_create']['links']
+                for n in links:
+                    print("splitting link - ", n)
+                    src,dst = n.split(':')
+                    link.append((src,dst))
 
             mfib_data['docker_create']['host_config'] = self.docker.create_host_config(
-                binds=binds, port_bindings=ports)
+                binds=binds, port_bindings=ports, links=link)
             pprint(mfib_data)
             try:
                 self.logger.info("creating container:")
                 cont = self.docker.create_container(**mfib_data['docker_create'] )
                 print("\tContainer: ", cont)
                 self.logger.info("starting container")
+
                 response = self.docker.start(container=cont.get('Id'))
                 self.logger.info("\tResult: %s"%str(response))
                 self.running_mfs[mfib_data['docker_create']['name']] =  {
@@ -271,17 +274,34 @@ class SecureCli(ClientSafe):
                     tool['params']['vnf'] = real_vnf
                 else:
                     self.logger.error("Could not resolve %s "%params['vnf'])
-                    return
+                    return "ERROR"
+            elif 'interface' in params:
+                real_interface = self.sap_to_name(params['interface'])
+                if real_interface:
+                    tool['params']['interface'] = real_interface
+                else:
+                    self.logger.error("Could not resolve %s "%params['interface'])
+                    return "ERROR"
             tools.append(tool)
         return tools
 
-    # TODO 
-    # add method with only portid, to allow translation of SAPs (virtual-sap4 -> veth3un)
     def port_to_name(self, vnf_id, portid):
         if vnf_id in self.vnfmapping:
             for p in self.vnfmapping[vnf_id]['ports']:
                 if p['id'] == portid:
                     return p['name']
+        return None
+    # SAP to name, eg. virtual-sap3 -> veth3un
+    def sap_to_name(self, sapid):
+        if sapid in self.sapmapping:
+            return self.sapmapping[sapid]
+        return None
+
+    # name to sap, eg. veth3un -> virtual-sap3
+    def name_to_sap(self, portname):
+        for n in self.sapmapping:
+            if portname == self.sapmapping[n]:
+                return n
         return None
 
     # Mapping from NF-FG IDs to real names

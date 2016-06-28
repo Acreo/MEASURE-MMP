@@ -64,12 +64,12 @@
         "name": "$(label)-$(name)",
         "environment": [
           "name=$(name)",
-          "interface = $(interface)",
+          "interface=$(interface)",
           "ramon_port=55555",
           "config_port=54736",
           "RATEMON_CLIENT=./ratemon_client.py",
           "DOUBLEDECKER_KEYS=/keys/public-keys.json",
-          "RAMON_PATH=./ramon/run_monitor.py",
+          "RAMON_PATH=/ramon/run_monitor.py",
           "RAMON_SAMPLE_RATE=20",
           "RAMON_ESTIMATION_INTERVAL=1",
           "RAMON_LINK_SPEED=10",
@@ -79,6 +79,9 @@
         ],
         "volumes": [
           "/etc/doubledecker:/keys:rw"
+        ],
+        "links": [
+          "ddbroker:broker"
         ]
       },
       "docker_start": {},
