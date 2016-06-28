@@ -103,44 +103,40 @@ class SecureCli(ClientSafe):
 
 
     def stopNFFG(self, ddsrc, nffg):
-        self.logger.info("StopNFFG called!")
-        self.logger.warning("TODO: ")
-        self.logger.warning(" - stop any running monitors")
+        self.logger.info("stopNFFG called!")
         self.vnfmapping = {}
         i = 0
+        self.logger.info("will try to remove %d monitors"%len(self.running_mfs))       
         for n in self.running_mfs:
+            print("stopping ", n)
             self.docker.stop(n)
+            print("removing ", n)
             self.docker.remove_container(n)
             i += 1
+        self.running_mfs = {}
         return "Stopped & removed %d monitors"%(i)
 
     def startNFFG(self, ddsrc, nffg):
 
         # TODO:
-        # - parse the MEASURE string
-        # - translate ports from MEASURE string to real ports
-        # - generate PAP-MEASURE backend code
-        # - start and configure monitoring tools
-
+        # not handling the SAP parameters if they exist
+        # nffg['sap'] = [{'name': 'virtual-sap4', 'interface': 'veth3un'}, 
+        # {'name': 'virtual-sap1', 'interface': 'veth0un'}, 
+        # {'name': 'virtual-sap3', 'interface': 'veth2un'}, 
+        # {'name': 'virtual-sap2', 'interface': 'veth1un'}]
 
         vnfs = {}
         ports = {}
         self.logger.info("startNFFG called from %s" % (ddsrc))
         self.MEASURE = nffg['measure']
+        if len(self.MEASURE) < 2:
+            self.logger.info("MEASURE string empty, removing running monitors!") 
+            retval = self.stopNFFG(ddsrc,nffg)
+            return retval
+           
         self.vnfmapping = {}
         for vnf in nffg['VNFs']:
             self.vnfmapping[int(vnf['id'])] = vnf
-
-      #  for vnf_id in self.vnfmapping.keys():
-       #     print("VNF with id: %s has name %s" % (vnf_id, self.vnfid_to_name(int(vnf_id))))
-
-       # print("VNF with name %s has id %s" % ('2_ovs5', self.vnfname_to_id('2_ovs5')))
-
-      #  for vnf_id in self.vnfmapping.keys():
-      #      for port_id in range(1, 10):
-      #          port_name = self.port_to_name(int(vnf_id), int(port_id))
-      #          if port_name:
-      #              print("VNF %s, port %d has name %s" % (vnf_id, port_id, port_name))
 
         parser = MEASUREParser()
         self.logger.info("Parsing MEASURE ..")
@@ -174,13 +170,6 @@ class SecureCli(ClientSafe):
             for m in match:
                 if m in data:
                     config = config.replace("$(%s)"%m,data[m])
-
-
-            #if config[n].startswith("$"):
-                #    print("\t it's a variable: ", config[n][1:])
-                #    if config[n][1:] in data:
-                #        config[n] = data[config[n][1:]]
-
         return config
 
     # how to know what is provided at startup and what through DD configuration
@@ -195,11 +184,6 @@ class SecureCli(ClientSafe):
                 self.cmds = mfib['docker']
             mfib_data = self.cmds[tool['label']]
 
-            #print("########## starting tool ########## ")
-            #print("incoming data: ")
-            #pprint(tool)
-            #print("mfib data: ")
-            #pprint(mfib_data)
 
             if "vnf" in tool['params']:
                 # resolve container_id
@@ -212,8 +196,6 @@ class SecureCli(ClientSafe):
             tool['params']['name'] = tool['name']
             tool['params']['label'] = tool['label']
 
-            #print("Known variables")
-            #pprint(tool['params'])
             if 'docker_create' in mfib_data:
                 mfib_data['docker_create'] = self.fill_params(tool['params'],mfib_data['docker_create'])
             if 'docker_start' in mfib_data:
@@ -222,9 +204,6 @@ class SecureCli(ClientSafe):
                 mfib_data['dd_start'] = self.fill_params(tool['params'],mfib_data['dd_start'])
             if 'dd_start' in mfib_data:
                 mfib_data['dd_stop'] = self.fill_params(tool['params'],mfib_data['dd_stop'])
-
-            #print("config after variable assignment")
-            #print("##########################################")
 
             binds = {}
             ports = {}
@@ -239,7 +218,6 @@ class SecureCli(ClientSafe):
                     self.logger.info("splitting %s"%str(n))
                     src,dst,mode = n.split(':')
                     mfib_data['docker_create']['volumes'].append(dst)
-            #        print("Volume src: ",src, " dst: ", dst, " mode:", mode)
                     binds[src] = {'bind':dst, 'mode':mode}
             if 'ports' in mfib_data['docker_create']:
                 vol = mfib_data['docker_create']['ports']
@@ -250,7 +228,6 @@ class SecureCli(ClientSafe):
                 for n in vol:
                     src,dst = n.split(':')
                     mfib_data['docker_create']['ports'].append(dst)
-            #        print("port src: ",src, " dst: ", dst)
                     ports[dst] = src
 
 
@@ -298,12 +275,8 @@ class SecureCli(ClientSafe):
             tools.append(tool)
         return tools
 
-    # TODO
-    # Nice method to dynamically translate tool arguments to better arguments
-    def nffgname_to_real(self, map):
-        if 'interface' in map and 'vnf' in map:
-            pass
-
+    # TODO 
+    # add method with only portid, to allow translation of SAPs (virtual-sap4 -> veth3un)
     def port_to_name(self, vnf_id, portid):
         if vnf_id in self.vnfmapping:
             for p in self.vnfmapping[vnf_id]['ports']:
@@ -595,36 +568,3 @@ __________.__               .__
                           keyfile=args.keyfile)
 
     genclient.start()
-
-
-
-
-# to be handled later
-#
-#
-# def configure():
-#     from pprint import pprint
-#     monitorconfig = {}
-#     monitorconfig['prepare'] = None
-#     monitorconfig['evaluate'] = [{'select':'select risk from view_all where risk > 0.7;',
-#                                   'action':'Publish(topic="alarm", message="Overload")'},
-#                                  {'select':'select throughput from view_all where throughput > 0.1;',
-#                                   'action':'Publish(topic="alarm", message="overflow ...")'}]
-#     monitorconfig['MFs'] = {'m1': {'prepare':'CREATE STREAM stream_m1 (lm float, lsd float); '
-#                    'CREATE CONTINOUS VIEW view_m1 as select AVG(lm) as lm, AVG(lsd) as lsd from stream_m1; ',
-#                                    'insert': 'insert into stream_m1 (lm, lsd) VALUES (%s,%s)%result[]',
-#                                    'evaluate': [{'select':'select risk from view_m1 where risk > 0.7;',
-#                                   'action':'Publish(topic="alarm", message="Overload")'},
-#                                  {'select':'select throughput from view_m1 where throughput > 0.1;',
-#                                   'action':'Publish(topic="alarm", message="overflow ...")'}]
-#                                    },
-#                             'm2': {'prepare':'CREATE STREAM stream_m2 (lm float, lsd float); '
-#                             'CREATE CONTINOUS VIEW view_m2 as select AVG(lm) as lm, AVG(lsd) as lsd from stream_m2; ',
-#                                    'insert': 'insert into stream_m2 (lm, lsd) VALUES (%s,%s)%result[]',
-#                                    'evaluate': [{'select':'select risk from view_m2 where risk > 0.7;',
-#                                   'action':'Publish(topic="alarm", message="Overload")'},
-#                                  {'select':'select throughput from view_m2 where throughput > 0.1;',
-#                                   'action':'Publish(topic="alarm", message="overflow ...")'}]
-#                                    }
-#                             }
-#     monitorconfig['postpare'] = 'CREATE CONTINOUS VIEW view_all as SELECT AVG(m1,m2,m3,m4) from view_m1, view_m2..);'
