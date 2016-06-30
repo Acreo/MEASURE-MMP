@@ -5,9 +5,13 @@ push:
 	docker push "gitlab.testbed.se:5000/mmp"
 
 stop:
-	docker kill mmp cadvisor-m1 ratemon-m1 ratemon-m2 ratemon-m3 ratemon-m4 ratemon-m5 ratemon-m6
+	-docker ps -a --filter="name=ratemon*" | egrep -o -e '(ratemon-.+)'  | xargs docker kill
+	-docker ps -a --filter="name=cadvisor*" | egrep -o -e '(cadvisor-.+)'  | xargs docker kill
+	-docker kill mmp
 rm:
-	docker rm mmp cadvisor-m1 ratemon-m1 ratemon-m2 ratemon-m3 ratemon-m4 ratemon-m5 ratemon-m6
+	-docker ps -a --filter="name=ratemon*" | egrep -o -e '(ratemon-.+)'  | xargs docker rm
+	-docker ps -a --filter="name=cadvisor*" | egrep -o -e '(cadvisor-.+)'  | xargs docker rm
+	-docker rm mmp
 start:
 	docker run -d  --volume=/:/rootfs:ro --volume=/etc/doubledecker:/keys:ro  --volume=/var/run:/var/run:rw  --volume=/sys:/sys:ro  --volume=/var/lib/docker/:/var/lib/docker:ro --link ddbroker:broker --name=mmp  gitlab.testbed.se:5000/mmp
 inter:

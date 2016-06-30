@@ -36,7 +36,7 @@ import docker
 import docker.errors
 from jsonrpcserver import dispatch, Methods
 import jsonrpcserver.exceptions
-from jsonrpcclient.request import Request
+from jsonrpcclient.request import Request, Notification
 from measure import MEASUREParser
 import pyparsing
 from papbackend import PAPMeasureBackend
@@ -110,12 +110,15 @@ class SecureCli(ClientSafe):
         i = 0
         self.logger.info("will try to remove %d monitors"%len(self.running_mfs))       
         for n in self.running_mfs:
-            print("stopping ", n)
-            self.docker.stop(n)
+            print("killing ", n)
+            self.docker.kill(n)
             print("removing ", n)
             self.docker.remove_container(n)
             i += 1
         self.running_mfs = {}
+        if i > 0:
+            self.publish(topic="monitoring_status", message=str(Notification("monitoring", status="off")))
+
         return "Stopped & removed %d monitors"%(i)
 
     def startNFFG(self, ddsrc, nffg):
@@ -154,6 +157,8 @@ class SecureCli(ClientSafe):
         self.logger.info("######################")
         self.logger.info("results")
         pprint(result)
+        self.publish(topic="monitoring_status", message=str(Notification("monitoring", status="on")))
+        
         return "OK"
 
     def fill_params(self,data,config, indent=0):
