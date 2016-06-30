@@ -103,6 +103,24 @@ class SecureCli(ClientSafe):
                     
         return data
 
+    def kill_container(self, container):
+        self.logger.info("Trying to kill container: " + container)
+        try:
+            self.docker.kill(container)
+        except docker.errors.NotFound as e:
+            self.logger.warning("NotFound when killing container: " + str(e))
+        except docker.errors.APIError as e :
+            self.logger.warning("APIError when killing container: " + str(e))
+
+    def remove_container(self, container):
+        self.logger.info("Trying to remove container: " + container)
+        try:
+            self.docker.remove_container(container)
+        except docker.errors.NotFound as e:
+            self.logger.warning("NotFound when removing container: " + str(e))
+        except docker.errors.APIError as e :
+            self.logger.warning("APIError when removing container: " + str(e))
+
 
     def stopNFFG(self, ddsrc, nffg):
         self.logger.info("stopNFFG called!")
@@ -110,10 +128,8 @@ class SecureCli(ClientSafe):
         i = 0
         self.logger.info("will try to remove %d monitors"%len(self.running_mfs))       
         for n in self.running_mfs:
-            print("killing ", n)
-            self.docker.kill(n)
-            print("removing ", n)
-            self.docker.remove_container(n)
+            self.kill_container(n)
+            self.remove_container(n)
             i += 1
         self.running_mfs = {}
         if i > 0:
