@@ -89,7 +89,9 @@ class SecureCli(ClientSafe):
                     self.logger.info("sending message: %s"%(str(message)))
                     self.sendmsg(ddsrc,msg=message)
                     self.running_mfs[n]['state'] = 'dd_start'
-
+        if ddsrc == "agg":
+            self.logger.info("Aggregator said hello, setting cutoff and alarm level")
+            self.publish(topic="measurement", message=str(Request("set_alarm_level", alarm_level=25.0, cutoff_level=0.9)))
     def docker_information_request(self, ddsrc, name):
         self.logger.info("Retrieving information about container %s" % name)
         try:
@@ -139,6 +141,7 @@ class SecureCli(ClientSafe):
             measure = parser.parseToDict(self.MEASURE)
         except pyparsing.ParseException as e: 
             self.logger.error("Could not parse MEASURE string!")
+            self.logger.error(str(e))
             return "Could not parse measure!"
                     
         pap = PAPMeasureBackend()
@@ -489,15 +492,17 @@ class SecureCli(ClientSafe):
     # callback called automatically everytime a point to point is sent at
     # destination to the current client
     def on_data(self, src, msg):
-        self.logger.info("Queueing future")
+        self.logger.info("DATA-Queueing future")
         future = self.executor.submit(self.handle_jsonrpc, src, msg, None)
+        self.logger.info("DATA-Queued")
 
     # callback called when the client receives a message on a topic h
     # subscribed to previously
     def on_pub(self, src, topic, msg):
-        self.logger.info("Queueing future")
-        #future = self.executor.submit(self.handle_jsonrpc,src,msg,topic)
-        self.handle_jsonrpc(src=src, topic=topic, msg=msg)
+        self.logger.info("PUB-Queueing future")
+        future = self.executor.submit(self.handle_jsonrpc,src,msg,topic)
+        self.logger.info("PUB-Queued")
+        #self.handle_jsonrpc(src=src, topic=topic, msg=msg)
 
     # callback called upon registration of the client with its broker
     def on_reg(self):
@@ -515,7 +520,7 @@ class SecureCli(ClientSafe):
     # its broker has failed, it can happen if the broker is terminated/crash
     # or if the link is broken
     def on_discon(self):
-        self.logger.warning("The client got disconnected")
+        self.logger.error("The client got disconnected")
 
         # this function shuts down the client in a clean way
         # in this example it exists as soon as the client is disconnected

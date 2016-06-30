@@ -78,7 +78,9 @@
           "RAMON_CUTOFF=90"
         ],
         "volumes": [
-          "/etc/doubledecker:/keys:rw"
+          "/etc/doubledecker:/keys:rw",
+          "/sys:/sys:ro"
+
         ],
         "links": [
           "ddbroker:broker"
