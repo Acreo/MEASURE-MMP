@@ -113,6 +113,9 @@
         ],
         "ports": [
           "8081:8080"
+        ],
+        "links": [
+          "ddbroker:dealer"
         ]
       },
       "docker_start": {
