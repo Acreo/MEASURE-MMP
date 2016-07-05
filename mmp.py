@@ -30,6 +30,8 @@ import argparse
 import time
 import json
 import logging
+import signal
+import sys
 
 from doubledecker.clientSafe import ClientSafe
 import docker
@@ -40,7 +42,7 @@ from jsonrpcclient.request import Request, Notification
 from measure import MEASUREParser
 import pyparsing
 from papbackend import PAPMeasureBackend
-from pprint import pprint
+from pprint import pformat
 from  concurrent.futures import ThreadPoolExecutor
 restart = False
 Request.notification_errors = True
@@ -83,7 +85,7 @@ class SecureCli(ClientSafe):
         for n in self.running_mfs:
             if self.running_mfs[n]['name'] == ddsrc:
                 self.logger.info("tool is running, configured?")
-                pprint(self.running_mfs[n])
+                self.logger.info(pformat(self.running_mfs[n]))
                 if self.running_mfs[n]['state'] == 'docker_start':
                     message = str(Request(**self.running_mfs[n]['config']['dd_start']))
                     self.logger.info("sending message: %s"%(str(message)))
@@ -91,7 +93,7 @@ class SecureCli(ClientSafe):
                     self.running_mfs[n]['state'] = 'dd_start'
         if ddsrc == "agg":
             self.logger.info("Aggregator said hello, setting cutoff and alarm level")
-            self.publish(topic="measurement", message=str(Request("set_alarm_level", alarm_level=25.0, cutoff_level=0.9)))
+            self.sendmsg(ddsrc, msg=str(Notification("set_alarm_level", alarm_level=25.0, cutoff_level=0.9)))
     def docker_information_request(self, ddsrc, name):
         self.logger.info("Retrieving information about container %s" % name)
         try:
@@ -115,20 +117,29 @@ class SecureCli(ClientSafe):
     def remove_container(self, container):
         self.logger.info("Trying to remove container: " + container)
         try:
-            self.docker.remove_container(container)
+            self.docker.remove_container(container=container, force=True)
         except docker.errors.NotFound as e:
             self.logger.warning("NotFound when removing container: " + str(e))
         except docker.errors.APIError as e :
             self.logger.warning("APIError when removing container: " + str(e))
 
+    def sighandler(self,signum,frame):
+        self.logger.info("sighandler called!")
+        self.logger.info("stopping containers")
+        self.stopNFFG(None,None)
+        self.logger.info("unregistring from broker")
+        self.shutdown()
+        self.logger.info("exiting..")
+        sys.exit(1)
 
     def stopNFFG(self, ddsrc, nffg):
         self.logger.info("stopNFFG called!")
         self.vnfmapping = {}
         i = 0
         self.logger.info("will try to remove %d monitors"%len(self.running_mfs))       
-        for n in self.running_mfs:
+        for n in self.running_mfs:        
             self.kill_container(n)
+        for n in self.running_mfs:
             self.remove_container(n)
             i += 1
         self.running_mfs = {}
@@ -168,11 +179,11 @@ class SecureCli(ClientSafe):
         result = pap.generate_config(measure)
         tools = self.resolve_tools(result['tools'])
         self.logger.info("resolved tools")
-        pprint(tools)
+        self.logger.info(pformat(tools))
         self.start_tools(tools)
         self.logger.info("######################")
         self.logger.info("results")
-        pprint(result)
+        self.logger.info(pformat(result))
         self.publish(topic="monitoring_status", message=str(Notification("monitoring", status="on")))
         
         return "OK"
@@ -229,41 +240,41 @@ class SecureCli(ClientSafe):
             link = []
             if 'volumes' in mfib_data['docker_create']:
                 vol = mfib_data['docker_create']['volumes']
-                print("start_tools1, volumes: ", vol)
+                self.logger.debug("start_tools1, volumes: %s "%str(vol))
                 del mfib_data['docker_create']['volumes']
                 mfib_data['docker_create']['volumes'] = []
-                print("start_tools2, volumes: ", vol)
+                self.logger.debug("start_tools2, volumes: %s"%str(vol))
                 for n in vol:
-                    self.logger.info("splitting %s"%str(n))
+                    self.logger.debug("splitting %s"%str(n))
                     src,dst,mode = n.split(':')
                     mfib_data['docker_create']['volumes'].append(dst)
                     binds[src] = {'bind':dst, 'mode':mode}
             if 'ports' in mfib_data['docker_create']:
                 vol = mfib_data['docker_create']['ports']
-                print("start_tools3, ports: ", vol)
+                self.logger.debug("start_tools3, ports: %s"%str(vol))
                 del mfib_data['docker_create']['ports']
                 mfib_data['docker_create']['ports'] = []
-                print("start_tools4, ports: ", vol)
+                self.logger.debug("start_tools4, ports: %s"%str(vol))
                 for n in vol:
                     src,dst = n.split(':')
                     mfib_data['docker_create']['ports'].append(dst)
                     ports[dst] = src
             if 'links' in mfib_data['docker_create']:
                 links = mfib_data['docker_create']['links']
-                print("start_tools5, links: ", links)
+                self.logger.debug("start_tools5, links: %s"%str(links))
                 del mfib_data['docker_create']['links']
                 for n in links:
-                    print("splitting link - ", n)
+                    self.logger.debug("splitting link - %s"%str(n))
                     src,dst = n.split(':')
                     link.append((src,dst))
 
             mfib_data['docker_create']['host_config'] = self.docker.create_host_config(
                 binds=binds, port_bindings=ports, links=link)
-            pprint(mfib_data)
+            self.logger.info(pformat(mfib_data))
             try:
                 self.logger.info("creating container:")
                 cont = self.docker.create_container(**mfib_data['docker_create'] )
-                print("\tContainer: ", cont)
+                self.logger.debug("\tContainer: %s"%str(cont))
                 self.logger.info("starting container")
 
                 response = self.docker.start(container=cont.get('Id'))
@@ -290,7 +301,7 @@ class SecureCli(ClientSafe):
                     tool['params']['vnf'] = real_vnf
                 else:
                     self.logger.error("Could not resolve vnf: %s interface: %s"%(params['vnf'], params['interface']))
-                    pprint(self.vnfmapping)
+                    self.logger.error(pformat(self.vnfmapping))
                     return "ERROR"
             elif 'vnf' in params:
                 real_vnf = self.vnfid_to_name(params['vnf'])
@@ -466,13 +477,13 @@ class SecureCli(ClientSafe):
         request = json.loads(msg.decode('UTF-8'))
         self.logger.info("got request %s "%str(request))
         if 'error' in request:
-            logging.error("Got error response from: %s" % src)
-            logging.error(str(request['error']))
+            self.logger.error("Got error response from: %s" % src)
+            self.logger.error(str(request['error']))
             return
 
         if 'result' in request:
-            logging.info("Got response from %s" % src)
-            logging.info(str(request['result']))
+            self.logger.info("Got response from %s" % src)
+            self.logger.info(str(request['result']))
             return
 
         # include the 'ddsrc' parameter so the
@@ -485,15 +496,12 @@ class SecureCli(ClientSafe):
             if len(request['params']) < 1:
                 request['params'] = {}
 
-        # print("request: ", request)
-        # print("Src: ", src.decode())
         request['params']['ddsrc'] = src.decode()
-        response = 1
         response = dispatch(self.methods, request)
-        self.logger.info("handle_json, got response %s"%(str(response)))
+        self.logger.info("dispatch() returned '%s'"%(str(response)))
         # if the http_status is 200, its request/response, otherwise notification
         if response.http_status == 200:
-            logging.info("Replying to %s with %s" % (str(src), str(response)))
+            self.logger.info("Replying to '%s' with '%s'" % (str(src), str(response)))
             self.sendmsg(src, str(response))
         # notification, correctly formatted
         elif response.http_status == 204:
@@ -501,29 +509,24 @@ class SecureCli(ClientSafe):
         # if 400, some kind of error
         # return a message to the sender, even if it was a notification
         elif response.http_status == 400:
-            self.logger.info("sending response to %s  message: %s"%(str(str), str(response)))
+            self.logger.info("sending response to '%s' message: '%s'"%(str(str), str(response)))
             self.sendmsg(src, str(response))
-            logging.error("Recived bad JSON-RPC from %s, error %s" % (str(src), str(response)))
+            self.logger.error("Recived bad JSON-RPC from '%s', error '%s'" % (str(src), str(response)))
         else:
-            logging.error(
-                "Recived bad JSON-RPC from %s \nRequest: %s\nResponose: %s" % (str(src), msg.decode(), str(response)))
+            self.logger.error(
+                "Recived bad JSON-RPC from '%s'\nRequest: '%s'\nResponose: '%s'" % (str(src), msg.decode(), str(response)))
 
 
 
     # callback called automatically everytime a point to point is sent at
     # destination to the current client
     def on_data(self, src, msg):
-        self.logger.info("DATA-Queueing future")
         future = self.executor.submit(self.handle_jsonrpc, src, msg, None)
-        self.logger.info("DATA-Queued")
 
     # callback called when the client receives a message on a topic h
     # subscribed to previously
     def on_pub(self, src, topic, msg):
-        self.logger.info("PUB-Queueing future")
         future = self.executor.submit(self.handle_jsonrpc,src,msg,topic)
-        self.logger.info("PUB-Queued")
-        #self.handle_jsonrpc(src=src, topic=topic, msg=msg)
 
     # callback called upon registration of the client with its broker
     def on_reg(self):
@@ -558,8 +561,7 @@ if __name__ == '__main__':
         '-d',
         "--dealer",
         help='URL to connect DEALER socket to, "tcp://1.2.3.4:5555"',
-        nargs='?',
-        default='tcp://127.0.0.1:5555')
+        nargs='?')
     parser.add_argument(
         '-f',
         "--logfile",
@@ -577,7 +579,7 @@ if __name__ == '__main__':
         "--keyfile",
         help='File containing the encryption/authentication keys)',
         nargs='?',
-        default='/etc/doubledecker/public-keys.json')
+        default='/keys/public-keys.json')
 
     args = parser.parse_args()
 
@@ -606,11 +608,24 @@ __________.__               .__
  |    |   |  |_|  |  / /_/  >  |   |  \
  |____|   |____/____/\___  /|__|___|  /
                     /_____/         \/   """
-
+                  
     logging.info(logo)
-    genclient = SecureCli(name="mmp",
-                          dealerurl=args.dealer,
-                          customer="public",
+    name = "mmp"
+    customer = "public"
+    dealer = args.dealer
+    import os
+    if not dealer and 'DEALER_PORT' in os.environ:
+        dealer = os.environ['DEALER_PORT']  
+    if not dealer and 'BROKER_PORT' in os.environ:
+        dealer = os.environ['BROKER_PORT']
+        
+    logging.info("starting securecli with key: %s dealer: %s name %s customer: %s"%(args.keyfile,dealer,name,customer))
+    genclient = SecureCli(name=name,
+                          dealerurl=dealer,
+                          customer=customer,
                           keyfile=args.keyfile)
-
+    signal.signal(signal.SIGTERM,genclient.sighandler)
     genclient.start()
+    print("genclient returned!")
+    logging.info("Terminating MMP - stopping running monitoring containers") 
+    genclient.stopNFFG(None,None)

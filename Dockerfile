@@ -37,7 +37,6 @@ RUN python3 setup.py build
 RUN python3 setup.py install
 
 ENV CLIENT_NAME mmp
-ENV DEALER_PORT tcp://172.17.0.1:5555
 RUN pip3 install pyparsing
 
 
@@ -46,4 +45,8 @@ COPY papbackend.py /mmp/
 COPY run.sh /mmp/
 COPY mfib.json /mmp/
 WORKDIR /mmp 
-CMD ./run.sh
+# calling CMD in this way will cause python3 to have PID 1 in the container
+# and not be started by sh
+# this allows python3 to receive and handle the SIGTERM sent by "docker stop" 
+# which otherwise would be recieved only by /bin/sh 
+CMD ["/usr/bin/python3", "mmp.py"]
