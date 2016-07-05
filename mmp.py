@@ -81,19 +81,21 @@ class SecureCli(ClientSafe):
 
     # RPC server
     def hello(self,ddsrc, **kwargs):
-        self.logger.info("got HELLO from %s"%str(ddsrc))
+        self.logger.info("HELLO from %s"%str(ddsrc))
         for n in self.running_mfs:
             if self.running_mfs[n]['name'] == ddsrc:
-                self.logger.info("tool is running, configured?")
-                self.logger.info(pformat(self.running_mfs[n]))
+                self.logger.info("Found monitoring function")
+                self.logger.debug(pformat(self.running_mfs[n]))
                 if self.running_mfs[n]['state'] == 'docker_start':
-                    message = str(Request(**self.running_mfs[n]['config']['dd_start']))
-                    self.logger.info("sending message: %s"%(str(message)))
-                    self.sendmsg(ddsrc,msg=message)
+                    for runargs in self.running_mfs[n]['config']['dd_start']:
+                        message = str(Request(**runargs))
+                        self.logger.info("sending message: %s"%(str(message)))
+                        self.sendmsg(ddsrc,msg=message)
                     self.running_mfs[n]['state'] = 'dd_start'
         if ddsrc == "agg":
             self.logger.info("Aggregator said hello, setting cutoff and alarm level")
             self.sendmsg(ddsrc, msg=str(Notification("set_alarm_level", alarm_level=25.0, cutoff_level=0.9)))
+
     def docker_information_request(self, ddsrc, name):
         self.logger.info("Retrieving information about container %s" % name)
         try:
@@ -124,24 +126,34 @@ class SecureCli(ClientSafe):
             self.logger.warning("APIError when removing container: " + str(e))
 
     def sighandler(self,signum,frame):
-        self.logger.info("sighandler called!")
-        self.logger.info("stopping containers")
+        self.logger.warning("Caught SIGTERM")
+        self.logger.info("Stopping containers")
         self.stopNFFG(None,None)
-        self.logger.info("unregistring from broker")
+        self.logger.info("Unregistring from broker")
         self.shutdown()
-        self.logger.info("exiting..")
+        self.logger.info("Exiting..")
         sys.exit(1)
 
     def stopNFFG(self, ddsrc, nffg):
-        self.logger.info("stopNFFG called!")
+        self.logger.info("stopNFFG called by %s"%ddsrc)
         self.vnfmapping = {}
         i = 0
-        self.logger.info("will try to remove %d monitors"%len(self.running_mfs))       
-        for n in self.running_mfs:        
-            self.kill_container(n)
+        self.logger.info("Will try to remove %d monitors"%len(self.running_mfs))
+        self.logger.debug(pformat(self.running_mfs))
         for n in self.running_mfs:
-            self.remove_container(n)
-            i += 1
+            if 'singleton' != self.running_mfs[n]['state']:
+                for stopargs in self.running_mfs[n]['config']['dd_stop']:
+                    message = str(Request(**stopargs))
+                    self.logger.info("sending message: %s"%(str(message)))
+                    self.sendmsg(n,msg=message)
+
+        for n in self.running_mfs:
+            if 'singleton' != self.running_mfs[n]['state']:
+                self.kill_container(n)
+        for n in self.running_mfs:
+            if 'singleton' != self.running_mfs[n]['state']:
+                self.remove_container(n)
+                i += 1
         self.running_mfs = {}
         if i > 0:
             self.publish(topic="monitoring_status", message=str(Notification("monitoring", status="off")))
@@ -166,6 +178,8 @@ class SecureCli(ClientSafe):
                 self.sapmapping[n['name']] = n['interface']
 
         parser = MEASUREParser()
+        #parser.debug_all()
+
         self.logger.info("Parsing MEASURE ..")
         try: 
             measure = parser.parseToDict(self.MEASURE)
@@ -178,12 +192,11 @@ class SecureCli(ClientSafe):
         self.logger.info("Generate PAP config..")
         result = pap.generate_config(measure)
         tools = self.resolve_tools(result['tools'])
-        self.logger.info("resolved tools")
-        self.logger.info(pformat(tools))
+        self.logger.info("Resolved tools")
+        self.logger.debug(pformat(tools))
         self.start_tools(tools)
-        self.logger.info("######################")
-        self.logger.info("results")
-        self.logger.info(pformat(result))
+        self.logger.debug("results")
+        self.logger.debug(pformat(result))
         self.publish(topic="monitoring_status", message=str(Notification("monitoring", status="on")))
         
         return "OK"
@@ -206,6 +219,7 @@ class SecureCli(ClientSafe):
     def start_tools(self, tools):
         import re
         self._p = re.compile('\$\(([^\)\(]+)\)')
+        toolist = []
         for tool in tools:
             # get the startup / create / dd_start / dd_stop info about the particular tool
             self.cmds = dict()
@@ -225,15 +239,15 @@ class SecureCli(ClientSafe):
                     return "ERROR"
             tool['params']['name'] = tool['name']
             tool['params']['label'] = tool['label']
-
+            mfib_data['name'] = tool['name']
             if 'docker_create' in mfib_data:
                 mfib_data['docker_create'] = self.fill_params(tool['params'],mfib_data['docker_create'])
             if 'docker_start' in mfib_data:
                 mfib_data['docker_start'] = self.fill_params(tool['params'],mfib_data['docker_start'])
             if 'dd_start' in mfib_data:
-                mfib_data['dd_start'] = self.fill_params(tool['params'],mfib_data['dd_start'])
-            if 'dd_start' in mfib_data:
-                mfib_data['dd_stop'] = self.fill_params(tool['params'],mfib_data['dd_stop'])
+                mfib_data['dd_start'] = [self.fill_params(tool['params'],mfib_data['dd_start'])]
+            if 'dd_stop' in mfib_data:
+                mfib_data['dd_stop'] = [self.fill_params(tool['params'],mfib_data['dd_stop'])]
 
             binds = {}
             ports = {}
@@ -270,23 +284,52 @@ class SecureCli(ClientSafe):
 
             mfib_data['docker_create']['host_config'] = self.docker.create_host_config(
                 binds=binds, port_bindings=ports, links=link)
-            self.logger.info(pformat(mfib_data))
-            try:
-                self.logger.info("creating container:")
-                cont = self.docker.create_container(**mfib_data['docker_create'] )
-                self.logger.debug("\tContainer: %s"%str(cont))
-                self.logger.info("starting container")
+            toolist.append(mfib_data)
 
-                response = self.docker.start(container=cont.get('Id'))
-                self.logger.info("\tResult: %s"%str(response))
-                self.running_mfs[mfib_data['docker_create']['name']] =  {
-                    "state": "docker_start",
-                    "config" : mfib_data,
-                    "name" : tool['name']
+
+        for tool in toolist:
+            if 'singleton' in tool and tool['singleton']:
+                self.logger.debug("this tool is a singleton")
+                if 'docker_create' in tool and 'image' in tool['docker_create']:
+                    mfimage = tool['docker_create']['image']
+                    for tool2 in toolist:
+                        if tool == tool2:
+                            continue
+                        if 'singleton' in tool2 and tool2['singleton'] and tool2['docker_create']['image'] == mfimage:
+                            del tool2['docker_create']
+                            del tool2['docker_start']
+                            tool2['singleton_name'] = tool['docker_create']['name']
+                            tool['dd_start'] += tool2['dd_start']
+                            tool['dd_stop'] += tool2['dd_stop']
+
+        self.logger.debug("tools after checking singletons")
+        self.logger.debug(pformat(toolist))
+
+        for mfib_data in toolist:
+            if 'docker_create' in mfib_data:
+                try:
+                    self.logger.info("creating container: %s"%mfib_data['docker_create']['name'])
+                    cont = self.docker.create_container(**mfib_data['docker_create'] )
+                    self.logger.debug("\tContainer: %s"%str(cont))
+                    self.logger.info("starting container")
+
+                    response = self.docker.start(container=cont.get('Id'))
+                    self.logger.debug("\tResult: %s"%str(response))
+                    self.running_mfs[mfib_data['docker_create']['name']] =  {
+                        "state": "docker_start",
+                        "config" : mfib_data,
+                        "name" : mfib_data['name']
+                    }
+                except docker.errors.APIError as e:
+                    self.logger.error("Error %s while trying to create %s"%(str(e),mfib_data['docker_create']['name']))
+            else:
+                self.running_mfs[mfib_data['name']] = {
+                    "state":"singleton",
+                    "config": mfib_data,
+                    "name" : mfib_data['singleton_name']
                 }
-            except docker.errors.APIError as e:
-                self.logger.error("Error %s while trying to create %s"%(str(e),tool['label']))
-
+        self.logger.debug("Running MFs")
+        self.logger.debug(pformat(self.running_mfs))
     def resolve_tools(self, unres_tools):
         tools = list()
         for tool in unres_tools:
@@ -473,17 +516,15 @@ class SecureCli(ClientSafe):
             return False
 
     def handle_jsonrpc(self, src, msg, topic=None):
-        self.logger.info("handling JSON-RPC")
+        self.logger.debug("handling JSON-RPC")
         request = json.loads(msg.decode('UTF-8'))
-        self.logger.info("got request %s "%str(request))
         if 'error' in request:
             self.logger.error("Got error response from: %s" % src)
             self.logger.error(str(request['error']))
             return
 
         if 'result' in request:
-            self.logger.info("Got response from %s" % src)
-            self.logger.info(str(request['result']))
+            self.logger.info("Got response from %s : %s" %(src,str(request['result'])))
             return
 
         # include the 'ddsrc' parameter so the
@@ -498,7 +539,7 @@ class SecureCli(ClientSafe):
 
         request['params']['ddsrc'] = src.decode()
         response = dispatch(self.methods, request)
-        self.logger.info("dispatch() returned '%s'"%(str(response)))
+        self.logger.debug("dispatch() returned '%s'"%(str(response)))
         # if the http_status is 200, its request/response, otherwise notification
         if response.http_status == 200:
             self.logger.info("Replying to '%s' with '%s'" % (str(src), str(response)))
@@ -626,6 +667,3 @@ __________.__               .__
                           keyfile=args.keyfile)
     signal.signal(signal.SIGTERM,genclient.sighandler)
     genclient.start()
-    print("genclient returned!")
-    logging.info("Terminating MMP - stopping running monitoring containers") 
-    genclient.stopNFFG(None,None)
