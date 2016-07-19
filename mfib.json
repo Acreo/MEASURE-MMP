@@ -106,8 +106,10 @@
         "image": "gitlab.testbed.se:5000/cadvisor:v1",
         "volumes": [
           "/etc/doubledecker:/keys:rw",
+          "/:/rootfs:ro",
           "/var/run:/var/run:rw",
-          "/sys:/sys:ro"
+          "/sys:/sys:ro",
+          "/var/lib/docker/:/var/lib/docker:ro"
         ],
         "ports": [
           "8081:8080"

@@ -4,7 +4,7 @@ __license__ = """
   Copyright (c) 2015 Pontus Sköldström, Bertrand Pechenot
 
   This file is part of libdd, the DoubleDecker hierarchical
-  messaging system DoubleDecker is free software; you can
+  dasdmessaging system DoubleDecker is free software; you can
   redistribute it and/or modify it under the terms of the GNU Lesser
   General Public License (LGPL) version 2.1 as published by the Free
   Software Foundation.
@@ -94,7 +94,7 @@ class SecureCli(ClientSafe):
                     self.running_mfs[n]['state'] = 'dd_start'
         if ddsrc == "agg":
             self.logger.info("Aggregator said hello, setting cutoff and alarm level")
-            self.sendmsg(ddsrc, msg=str(Notification("set_alarm_level", alarm_level=25.0, cutoff_level=0.9)))
+            self.sendmsg(ddsrc, msg=str(Notification("set_alarm_level", alarm_level=15.0, cutoff_level=0.9)))
 
     def docker_information_request(self, ddsrc, name):
         self.logger.info("Retrieving information about container %s" % name)
@@ -659,7 +659,8 @@ __________.__               .__
         dealer = os.environ['DEALER_PORT']  
     if not dealer and 'BROKER_PORT' in os.environ:
         dealer = os.environ['BROKER_PORT']
-        
+    logging.basicConfig(format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s')
+                                    
     logging.info("starting securecli with key: %s dealer: %s name %s customer: %s"%(args.keyfile,dealer,name,customer))
     genclient = SecureCli(name=name,
                           dealerurl=dealer,
