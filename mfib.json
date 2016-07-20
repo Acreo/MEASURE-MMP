@@ -103,7 +103,7 @@
           "NAME=$(name)",
           "KEY=public-keys.json"
         ],
-        "image": "gitlab.testbed.se:5000/cadvisor:v1",
+        "image": "gitlab.testbed.se:5000/cadvisor:latest",
         "volumes": [
           "/etc/doubledecker:/keys:rw",
           "/:/rootfs:ro",
