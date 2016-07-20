@@ -659,8 +659,12 @@ __________.__               .__
         dealer = os.environ['DEALER_PORT']  
     if not dealer and 'BROKER_PORT' in os.environ:
         dealer = os.environ['BROKER_PORT']
+  
+    if not dealer:
+        printf("Could not find dealer, environment: " , os.environment)
+        dealer = 'tcp://ddbroker:5555'
     logging.basicConfig(format='%(asctime)s %(name)-12s %(levelname)-8s %(message)s')
-                                    
+                                      
     logging.info("starting securecli with key: %s dealer: %s name %s customer: %s"%(args.keyfile,dealer,name,customer))
     genclient = SecureCli(name=name,
                           dealerurl=dealer,
